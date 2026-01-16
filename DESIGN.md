@@ -122,7 +122,8 @@ Two tools only. Simple interface, agent doesn't need to understand internals.
 **Chunk response format**:
 ```json
 {
-  "section_id": "D1.2.3",
+  "section_id": "d1-2-3-exception-vectors",
+  "parent_id": "d1-2-exception-handling",
   "title": "Exception vectors",
   "path": "D1 Exception Model → D1.2 Exception handling → D1.2.3",
   "content": "The vector base address must be aligned to 2KB...",
@@ -133,13 +134,14 @@ Two tools only. Simple interface, agent doesn't need to understand internals.
     "lines": [450, 500]
   },
   "references": [
-    {"id": "D1.2.1", "summary": "Exception types and their priority..."}
+    {"id": "d1-2-1-exception-types", "summary": "Exception types and their priority..."}
   ]
 }
 ```
 
-- `source.id` identifies the document (needed for `get_section` calls and cross-document references)
-- `source.name` is the human-readable document title
+- `section_id` is a slug derived from file path + header hierarchy
+- `parent_id` enables tree navigation (siblings, ancestors)
+- `source.id` identifies the document (needed for `get_section` calls)
 - `source.file` and `source.lines` enable the agent to read additional context directly from the markdown file when needed
 
 ## Fine-tuning Pipeline
