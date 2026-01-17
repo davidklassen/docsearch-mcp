@@ -1,7 +1,7 @@
 [project]
 name = "docsearch"
 version = "0.1.0"
-description = "Add your description here"
+description = "Semantic search over documentation via MCP"
 readme = "README.md"
 authors = [
     { name = "David Klassen", email = "davidklassen@proton.me" }
