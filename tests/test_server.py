@@ -1,8 +1,10 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import docsearch.server
+from docsearch.embedding import EMBEDDING_DIM
 from docsearch.server import init_server, search
 
 
@@ -13,21 +15,42 @@ def sample_file() -> Path:
 
 
 @pytest.fixture
-def initialized_server(sample_file: Path, tmp_path: Path) -> None:
+def mock_embedder() -> MagicMock:
+    """Mock Embedder that returns fake embeddings."""
+    embedder = MagicMock()
+    # Return embeddings matching input list length
+    embedder.embed.side_effect = lambda texts: [[0.1] * EMBEDDING_DIM for _ in texts]
+    embedder.embed_single.return_value = [0.1] * EMBEDDING_DIM
+    return embedder
+
+
+@pytest.fixture
+def initialized_server(
+    sample_file: Path, tmp_path: Path, mock_embedder: MagicMock
+) -> None:
     """Initialize server with test data."""
     db_path = tmp_path / "test.db"
-    init_server([sample_file], db_path)
+    with patch("docsearch.embedding.Embedder", return_value=mock_embedder):
+        init_server([sample_file], db_path)
+    # Set the mock embedder on the module so search() can use it
+    docsearch.server._embedder = mock_embedder
 
 
 class TestInitServer:
-    def test_init_creates_db(self, sample_file: Path, tmp_path: Path) -> None:
+    def test_init_creates_db(
+        self, sample_file: Path, tmp_path: Path, mock_embedder: MagicMock
+    ) -> None:
         db_path = tmp_path / "test.db"
-        init_server([sample_file], db_path)
+        with patch("docsearch.embedding.Embedder", return_value=mock_embedder):
+            init_server([sample_file], db_path)
         assert db_path.exists()
 
-    def test_init_temp_db(self, sample_file: Path) -> None:
+    def test_init_temp_db(self, sample_file: Path, mock_embedder: MagicMock) -> None:
         # No db_path = temp file
-        init_server([sample_file], None)
+        with patch("docsearch.embedding.Embedder", return_value=mock_embedder):
+            init_server([sample_file], None)
+        # Set the mock embedder on the module so search() can use it
+        docsearch.server._embedder = mock_embedder
         # Should not raise, server should be queryable
         result = search("sample")
         assert "results" in result
@@ -39,13 +62,21 @@ class TestSearchTool:
         assert "results" in result
         assert len(result["results"]) > 0
 
-    def test_search_no_results(self, initialized_server: None) -> None:
+    def test_search_hybrid_returns_results(self, initialized_server: None) -> None:
+        """Hybrid search returns results even for non-matching literal queries.
+
+        This is expected behavior: while BM25 may find nothing,
+        vector similarity search can still find related documents.
+        """
         result = search("xyznonexistent123")
-        assert result["results"] == []
+        # Hybrid search returns results via vector similarity
+        assert "results" in result
+        assert len(result["results"]) > 0
 
     def test_search_not_initialized(self) -> None:
         # Reset module state
         docsearch.server._db_path = None
+        docsearch.server._embedder = None
         result = search("test")
         assert "error" in result
 

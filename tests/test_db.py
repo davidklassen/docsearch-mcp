@@ -6,12 +6,21 @@ import pytest
 
 from docsearch.db import (
     DatabaseNotFoundError,
+    compute_rrf_scores,
+    create_embedding_schema,
     create_schema,
     delete_source,
+    delete_source_embeddings,
+    hybrid_search,
     index_chunks,
+    load_vec_extension,
     open_db,
+    rrf_score,
     search,
+    search_vectors,
+    store_embeddings,
 )
+from docsearch.embedding import EMBEDDING_DIM
 from docsearch.models import Chunk, Source
 
 
@@ -512,3 +521,246 @@ class TestSearch:
             assert "score" in result_dict
             assert "source" in result_dict
             assert isinstance(result_dict["source"], dict)
+
+
+# --- Embedding / Vector Search Tests ---
+
+
+class TestLoadVecExtension:
+    """Tests for sqlite-vec extension loading."""
+
+    def test_load_vec_extension(self, db_path: Path) -> None:
+        """Vec extension loads successfully."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        load_vec_extension(conn)
+
+        # Verify extension loaded by checking vec_version
+        cursor = conn.execute("SELECT vec_version()")
+        version = cursor.fetchone()[0]
+        assert version is not None
+        conn.close()
+
+
+class TestCreateEmbeddingSchema:
+    """Tests for embedding schema creation."""
+
+    def test_create_embedding_schema(self, db_path: Path) -> None:
+        """Embedding schema is created successfully."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        # Verify table exists
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='section_embeddings'"
+        )
+        assert cursor.fetchone() is not None
+        conn.close()
+
+    def test_create_embedding_schema_idempotent(self, db_path: Path) -> None:
+        """Creating embedding schema twice doesn't error."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+        create_embedding_schema(conn)  # Should not raise
+        conn.close()
+
+
+class TestStoreEmbeddings:
+    """Tests for embedding storage."""
+
+    def test_store_embeddings(self, db_path: Path, sample_chunks: list[Chunk]) -> None:
+        """Embeddings are stored correctly."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        create_schema(conn)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        index_chunks(conn, sample_chunks)
+
+        embeddings = [[float(i)] * EMBEDDING_DIM for i in range(len(sample_chunks))]
+        count = store_embeddings(conn, sample_chunks, embeddings)
+
+        assert count == len(sample_chunks)
+
+        # Verify count in table
+        cursor = conn.execute("SELECT COUNT(*) FROM section_embeddings")
+        assert cursor.fetchone()[0] == len(sample_chunks)
+        conn.close()
+
+    def test_store_embeddings_empty(self, db_path: Path) -> None:
+        """Storing empty list returns 0."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        count = store_embeddings(conn, [], [])
+        assert count == 0
+        conn.close()
+
+    def test_store_embeddings_length_mismatch(
+        self, db_path: Path, sample_chunks: list[Chunk]
+    ) -> None:
+        """Raises error if chunks and embeddings have different lengths."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        with pytest.raises(ValueError, match="same length"):
+            store_embeddings(conn, sample_chunks, [[0.1] * EMBEDDING_DIM])
+        conn.close()
+
+
+class TestDeleteSourceEmbeddings:
+    """Tests for embedding deletion."""
+
+    def test_delete_source_embeddings(
+        self, db_path: Path, sample_chunks: list[Chunk]
+    ) -> None:
+        """Embeddings are deleted for a source."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        create_schema(conn)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        index_chunks(conn, sample_chunks)
+        embeddings = [[0.1] * EMBEDDING_DIM for _ in sample_chunks]
+        store_embeddings(conn, sample_chunks, embeddings)
+
+        # Delete embeddings
+        delete_source_embeddings(conn, sample_chunks[0].source.id)
+
+        cursor = conn.execute("SELECT COUNT(*) FROM section_embeddings")
+        assert cursor.fetchone()[0] == 0
+        conn.close()
+
+
+class TestSearchVectors:
+    """Tests for vector search."""
+
+    def test_search_vectors(self, db_path: Path, sample_chunks: list[Chunk]) -> None:
+        """Vector search returns nearest neighbors."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        create_schema(conn)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        index_chunks(conn, sample_chunks)
+
+        # Create embeddings with distinct values
+        embeddings = [
+            [1.0] * EMBEDDING_DIM,  # chunk 0
+            [0.5] * EMBEDDING_DIM,  # chunk 1
+            [0.0] * EMBEDDING_DIM,  # chunk 2
+        ]
+        store_embeddings(conn, sample_chunks, embeddings)
+
+        # Search with query close to first embedding
+        query = [0.9] * EMBEDDING_DIM
+        results = search_vectors(conn, query, limit=3)
+
+        assert len(results) == 3
+        # Results should be ordered by distance (ascending)
+        # First result should be closest to [1.0] * EMBEDDING_DIM
+        assert results[0][2] <= results[1][2] <= results[2][2]
+        conn.close()
+
+
+class TestRRFScore:
+    """Tests for RRF score computation."""
+
+    def test_rrf_score_rank_1(self) -> None:
+        """RRF score for rank 1 with k=60 is 1/61."""
+        score = rrf_score(1, k=60)
+        assert score == pytest.approx(1.0 / 61)
+
+    def test_rrf_score_rank_10(self) -> None:
+        """RRF score for rank 10 with k=60 is 1/70."""
+        score = rrf_score(10, k=60)
+        assert score == pytest.approx(1.0 / 70)
+
+    def test_rrf_score_different_k(self) -> None:
+        """RRF score with different k values."""
+        score = rrf_score(1, k=30)
+        assert score == pytest.approx(1.0 / 31)
+
+
+class TestComputeRRFScores:
+    """Tests for combined RRF score computation."""
+
+    def test_compute_rrf_scores_single_list(self) -> None:
+        """RRF scores with results in only one list."""
+        bm25 = [("src1", "sec1"), ("src1", "sec2")]
+        vec: list[tuple[str, str]] = []
+
+        scores = compute_rrf_scores(bm25, vec, k=60)
+
+        assert ("src1", "sec1") in scores
+        assert scores[("src1", "sec1")] == pytest.approx(1.0 / 61)
+        assert scores[("src1", "sec2")] == pytest.approx(1.0 / 62)
+
+    def test_compute_rrf_scores_overlap(self) -> None:
+        """Results in both lists get higher combined scores."""
+        bm25 = [("src1", "sec1"), ("src1", "sec2")]
+        vec = [("src1", "sec1"), ("src1", "sec3")]
+
+        scores = compute_rrf_scores(bm25, vec, k=60)
+
+        # sec1 is in both lists, should have highest score
+        assert scores[("src1", "sec1")] > scores[("src1", "sec2")]
+        assert scores[("src1", "sec1")] > scores[("src1", "sec3")]
+
+        # sec1 score should be sum of both contributions
+        expected_sec1 = 1.0 / 61 + 1.0 / 61  # rank 1 in both
+        assert scores[("src1", "sec1")] == pytest.approx(expected_sec1)
+
+
+class TestHybridSearch:
+    """Tests for hybrid BM25 + vector search."""
+
+    def test_hybrid_search_with_embeddings(
+        self, db_path: Path, sample_chunks: list[Chunk]
+    ) -> None:
+        """Hybrid search returns RRF-scored results."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        create_schema(conn)
+        load_vec_extension(conn)
+        create_embedding_schema(conn)
+
+        index_chunks(conn, sample_chunks)
+
+        # Create embeddings
+        embeddings = [[0.1] * EMBEDDING_DIM for _ in sample_chunks]
+        store_embeddings(conn, sample_chunks, embeddings)
+
+        # Search with query and embedding
+        query_embedding = [0.1] * EMBEDDING_DIM
+        results = hybrid_search(conn, "vectors", query_embedding=query_embedding)
+
+        assert len(results) > 0
+        # Results should have RRF scores
+        assert all(r.score > 0 for r in results)
+        conn.close()
