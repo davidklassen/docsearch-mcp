@@ -192,6 +192,12 @@ def search(
         List of SearchResult ordered by BM25 score (descending)
     """
     from docsearch.models import SearchResult, Source  # noqa: F811
+    from docsearch.utils import escape_fts5_query
+
+    # Escape query for safe FTS5 matching
+    escaped_query = escape_fts5_query(query)
+    if not escaped_query:
+        return []
 
     # BM25 returns negative scores (lower is better)
     # We negate for intuitive positive scores
@@ -218,7 +224,7 @@ def search(
             ORDER BY bm25(sections_fts)
             LIMIT ?
             """,
-            (query, source_id, limit),
+            (escaped_query, source_id, limit),
         )
     else:
         cursor = conn.execute(
@@ -242,7 +248,7 @@ def search(
             ORDER BY bm25(sections_fts)
             LIMIT ?
             """,
-            (query, limit),
+            (escaped_query, limit),
         )
 
     results: list[SearchResult] = []

@@ -1,5 +1,6 @@
 import json
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import click
@@ -25,6 +26,7 @@ from docsearch.models import Chunk
 
 
 @click.group()
+@click.version_option(version("docsearch"), prog_name="docsearch")
 def cli() -> None:
     """DocSearch - Semantic search over technical documentation."""
 

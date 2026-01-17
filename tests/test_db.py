@@ -522,6 +522,38 @@ class TestSearch:
             assert "source" in result_dict
             assert isinstance(result_dict["source"], dict)
 
+    def test_search_hyphenated_term(self, db_path: Path) -> None:
+        """Search with hyphenated term works (regression test for FTS5 parsing).
+
+        Previously, 'callee-saved' would be interpreted as 'callee NOT saved'
+        by FTS5, causing 'no such column: saved' error.
+        """
+        source = Source(
+            id="test-doc",
+            name="Test Doc",
+            file="test.md",
+            lines=(1, 50),
+        )
+        chunks = [
+            Chunk(
+                section_id="test-doc--callee",
+                parent_id=None,
+                title="Callee-saved Registers",
+                path="Test Doc -> Callee-saved Registers",
+                content="The callee-saved registers include x19-x28 and x29.",
+                source=source,
+            ),
+        ]
+
+        with open_db(db_path, create=True) as conn:
+            index_chunks(conn, chunks)
+
+            # This should NOT raise "no such column: saved"
+            results = search(conn, "callee-saved")
+
+            assert len(results) >= 1
+            assert "callee-saved" in results[0].content.lower()
+
 
 # --- Embedding / Vector Search Tests ---
 
