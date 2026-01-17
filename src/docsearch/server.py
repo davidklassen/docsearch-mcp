@@ -45,13 +45,11 @@ def init_server(files: list[Path], db_path: Path | None = None) -> None:
 
 
 @mcp.tool()
-def search(query: str, source_id: str | None = None, limit: int = 5) -> dict[str, Any]:
+def search(query: str) -> dict[str, Any]:
     """Search indexed documentation using BM25 full-text search.
 
     Args:
         query: Search query (FTS5 syntax supported)
-        source_id: Optional filter to search within one document
-        limit: Maximum results to return (default: 5)
 
     Returns:
         Dictionary with "results" array containing matching chunks with scores
@@ -60,7 +58,7 @@ def search(query: str, source_id: str | None = None, limit: int = 5) -> dict[str
         return {"error": "Server not initialized"}
 
     with open_db(_db_path, create=False) as conn:
-        results = db_search(conn, query, limit=limit, source_id=source_id)
+        results = db_search(conn, query)
     return {"results": [r.to_dict() for r in results]}
 
 

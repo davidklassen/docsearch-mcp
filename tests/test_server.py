@@ -39,15 +39,6 @@ class TestSearchTool:
         assert "results" in result
         assert len(result["results"]) > 0
 
-    def test_search_respects_limit(self, initialized_server: None) -> None:
-        result = search("sample", limit=1)
-        assert len(result["results"]) <= 1
-
-    def test_search_with_source_filter(self, initialized_server: None) -> None:
-        result = search("sample", source_id="sample-document")
-        for r in result["results"]:
-            assert r["source"]["id"] == "sample-document"
-
     def test_search_no_results(self, initialized_server: None) -> None:
         result = search("xyznonexistent123")
         assert result["results"] == []
