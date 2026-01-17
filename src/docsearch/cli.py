@@ -163,3 +163,63 @@ def search(
 
     for result in results:
         click.echo(json.dumps(result.to_dict()))
+
+
+def expand_globs(patterns: tuple[str, ...]) -> list[Path]:
+    """Expand glob patterns to file paths."""
+    files: list[Path] = []
+    for pattern in patterns:
+        path = Path(pattern)
+        # If it's an existing file, use it directly
+        if path.exists() and path.is_file():
+            files.append(path)
+        # Otherwise treat as glob pattern
+        elif "*" in pattern or "?" in pattern:
+            # Handle absolute vs relative patterns
+            if path.is_absolute():
+                # For absolute paths, glob from root
+                matches = list(Path("/").glob(pattern.lstrip("/")))
+            else:
+                matches = list(Path.cwd().glob(pattern))
+            files.extend(sorted(matches))
+        else:
+            # Not a glob, not an existing file - will error later
+            files.append(path)
+    return files
+
+
+@cli.command()
+@click.argument("patterns", nargs=-1, required=True)
+@click.option(
+    "--db",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Database path (default: temp file, deleted on exit)",
+)
+def serve(patterns: tuple[str, ...], db: Path | None) -> None:
+    """Start the MCP server over stdio, auto-indexing the specified files.
+
+    Supports glob patterns (e.g., docs/**/*.md for recursive matching).
+
+    Examples:
+
+        docsearch serve docs/*.md
+
+        docsearch serve "docs/**/*.md" --db ./docsearch.db
+    """
+    from docsearch.server import init_server, run_server
+
+    files = expand_globs(patterns)
+
+    if not files:
+        raise click.ClickException(f"No files found matching: {' '.join(patterns)}")
+
+    # Validate all files exist
+    for f in files:
+        if not f.exists():
+            raise click.ClickException(f"File not found: {f}")
+        if not f.is_file():
+            raise click.ClickException(f"Not a file: {f}")
+
+    init_server(files, db)
+    run_server()

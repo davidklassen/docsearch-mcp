@@ -12,6 +12,7 @@ dependencies = [
     "langchain-experimental>=0.4.1",
     "langchain-huggingface>=1.2.0",
     "langchain-text-splitters>=1.1.0",
+    "mcp>=1.25.0",
     "sentence-transformers>=5.2.0",
 ]
 
