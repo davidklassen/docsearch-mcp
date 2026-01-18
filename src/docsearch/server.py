@@ -108,7 +108,7 @@ def search(query: str) -> dict[str, Any]:
     with open_db(_db_path, create=False) as conn:
         load_vec_extension(conn)
         query_embedding = _embedder.embed_single(query)
-        results = hybrid_search(conn, query, query_embedding=query_embedding)
+        results = hybrid_search(conn, query, query_embedding=query_embedding, limit=6)
 
     return {"results": [r.to_dict() for r in results]}
 
