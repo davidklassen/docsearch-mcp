@@ -8,6 +8,12 @@ Semantic search over documentation via MCP.
 uv sync
 ```
 
+## Install as tool
+
+```bash
+uv cache clean && uv tool install --force .
+```
+
 ## Usage
 
 ```bash
